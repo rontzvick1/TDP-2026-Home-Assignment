@@ -24,3 +24,9 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 10MB
+
+# Application-level JWT configuration for tests
+app:
+  jwt:
+    secret: "404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970"
+    expiration-ms: 3600000

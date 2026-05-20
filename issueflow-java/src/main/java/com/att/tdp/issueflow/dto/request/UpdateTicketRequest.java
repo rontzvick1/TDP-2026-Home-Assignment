@@ -37,4 +37,7 @@ public class UpdateTicketRequest {
 
     /** If non-null, replaces the current due date. */
     private OffsetDateTime dueDate;
+
+    /** If true, unassigns the ticket (assignee becomes null). */
+    private Boolean removeAssignee;
 }

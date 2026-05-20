@@ -5,7 +5,7 @@ This document outlines the steps required to build, test, and run the IssueFlow 
 ## 📦 1. Prerequisites
 
 Before starting, ensure you have the following installed:
-* **Java 21** (JDK 21 or higher)
+* **Java 25** (JDK 25 or higher)
 * **Docker** & **Docker Compose** (to run the PostgreSQL database)
 
 *(Note: You do not need to install Maven, as the repository includes the Maven Wrapper `./mvnw`)*

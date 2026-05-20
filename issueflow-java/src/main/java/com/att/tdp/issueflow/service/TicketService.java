@@ -18,6 +18,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.validation.ValidationException;
+import com.att.tdp.issueflow.exception.ConflictException;
+import com.att.tdp.issueflow.entity.UserRole;
+import org.springframework.transaction.annotation.Propagation;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -108,7 +113,10 @@ public class TicketService {
         Ticket ticket = getActiveTicketEntity(id);
 
         // Apply only fields that are explicitly provided (non-null)
-        if (request.getTitle() != null && !request.getTitle().isBlank()) {
+        if (request.getTitle() != null) {
+            if (request.getTitle().isBlank()) {
+                throw new ValidationException("Title cannot be blank");
+            }
             ticket.setTitle(request.getTitle());
         }
         if (request.getDescription() != null) {
@@ -120,9 +128,14 @@ public class TicketService {
         if (request.getPriority() != null) {
             ticket.setPriority(request.getPriority());
         }
-        if (request.getAssigneeId() != null) {
+        if (Boolean.TRUE.equals(request.getRemoveAssignee())) {
+            ticket.setAssignee(null);
+        } else if (request.getAssigneeId() != null) {
             User newAssignee = userRepository.findById(request.getAssigneeId())
                     .orElseThrow(() -> new NotFoundException("User", request.getAssigneeId()));
+            if (newAssignee.getRole() != UserRole.DEVELOPER) {
+                throw new ValidationException("Assignee must have DEVELOPER role");
+            }
             ticket.setAssignee(newAssignee);
         }
         if (request.getDueDate() != null) {
@@ -170,6 +183,10 @@ public class TicketService {
             return;
         }
 
+        if (ticket.getProject().getDeletedAt() != null) {
+            throw new ConflictException("Cannot restore ticket because its parent project is soft-deleted");
+        }
+
         ticket.setDeletedAt(null);
         ticketRepository.save(ticket);
         log.debug("Restored ticket id={}", id);
@@ -197,8 +214,12 @@ public class TicketService {
      */
     private User resolveAssignee(Long assigneeId) {
         if (assigneeId != null) {
-            return userRepository.findById(assigneeId)
+            User user = userRepository.findById(assigneeId)
                     .orElseThrow(() -> new NotFoundException("Assignee User", assigneeId));
+            if (user.getRole() != UserRole.DEVELOPER) {
+                throw new ValidationException("Assignee must have DEVELOPER role");
+            }
+            return user;
         }
         // Auto-assign: pick the DEVELOPER with the fewest open tickets
         return autoAssignmentService.findLeastLoadedDeveloper().orElse(null);
@@ -208,7 +229,7 @@ public class TicketService {
      * Escalate ticket priority (used by the background scheduler).
      * @return the ticket ID for the audit log aspect
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Auditable(action = AuditAction.UPDATE, entityType = EntityType.TICKET)
     public TicketResponse escalateTicketPriority(Ticket ticket) {
         TicketPriority nextPriority = switch (ticket.getPriority()) {

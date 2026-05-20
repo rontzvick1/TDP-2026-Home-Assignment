@@ -10,8 +10,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.PageRequest;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
@@ -49,25 +49,21 @@ public class AutoAssignmentService {
      * <p>This method is called during ticket creation whenever {@code assigneeId}
      * is absent from the request body.</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public Optional<User> findLeastLoadedDeveloper() {
-        List<User> developers = userRepository.findAllByRole(UserRole.DEVELOPER);
+        // Query the DB directly to find the least loaded developer, getting only the top 1 result,
+        // and aggressively locking the row to prevent race conditions during concurrent assignment.
+        List<User> topDevelopers = userRepository.findLeastLoadedDeveloperWithLock(
+                CLOSED_STATUSES, 
+                PageRequest.of(0, 1)
+        );
 
-        if (developers.isEmpty()) {
-            log.debug("Auto-assignment: no DEVELOPER users found — ticket will remain unassigned");
-            return Optional.empty();
-        }
+        Optional<User> chosen = topDevelopers.isEmpty() ? Optional.empty() : Optional.of(topDevelopers.get(0));
 
-        Optional<User> chosen = developers.stream()
-                .min(Comparator
-                        // Primary sort: fewest open tickets
-                        .comparingLong((User dev) ->
-                                ticketRepository.countOpenTicketsByAssignee(dev.getId(), CLOSED_STATUSES))
-                        // Tie-break: lowest user ID for deterministic results
-                        .thenComparingLong(User::getId));
-
-        chosen.ifPresent(dev ->
-                log.debug("Auto-assignment: assigned to developer '{}' (id={})", dev.getUsername(), dev.getId()));
+        chosen.ifPresentOrElse(
+                dev -> log.debug("Auto-assignment: assigned to developer '{}' (id={})", dev.getUsername(), dev.getId()),
+                () -> log.debug("Auto-assignment: no DEVELOPER users found — ticket will remain unassigned")
+        );
 
         return chosen;
     }
