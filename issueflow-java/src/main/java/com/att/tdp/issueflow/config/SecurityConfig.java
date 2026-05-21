@@ -29,11 +29,17 @@ import java.util.Map;
  *
  * <p>Key design decisions:</p>
  * <ul>
- *   <li><b>Stateless</b> – no HTTP session; every request must carry a JWT.</li>
+ *   <li><b>Stateless</b> – no HTTP session; every authenticated request must carry a JWT.</li>
  *   <li><b>CSRF disabled</b> – safe for stateless REST APIs (no cookie-based auth).</li>
- *   <li><b>{@code POST /auth/login} open</b> – all other endpoints require a valid JWT.</li>
+ *   <li><b>Public endpoints</b>:
+ *     <ul>
+ *       <li>{@code /auth/**} – login, logout, and /me are all open (JWT presence is checked inside /me).</li>
+ *       <li>{@code POST /users} – user registration must be open so the first ADMIN can be bootstrapped.</li>
+ *       <li>{@code /swagger-ui/**} and {@code /v3/api-docs/**} – Swagger UI for manual testing.</li>
+ *     </ul>
+ *   </li>
  *   <li><b>{@code @EnableMethodSecurity}</b> – enables {@code @PreAuthorize} for
- *       fine-grained ADMIN/DEVELOPER role checks on individual endpoints (Phases 4–12).</li>
+ *       fine-grained ADMIN/DEVELOPER role checks on individual endpoints.</li>
  *   <li><b>Custom 401/403 handlers</b> – return structured JSON instead of HTML redirects.</li>
  * </ul>
  */
@@ -61,9 +67,18 @@ public class SecurityConfig {
 
             // ── URL-level access rules ───────────────────────────────────────
             .authorizeHttpRequests(auth -> auth
-                    // Public: only the login endpoint
-                    .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
-                    // Everything else requires authentication
+                    // ── Public endpoints (no token required) ──────────────────
+                    // All auth operations: login, logout, /me
+                    .requestMatchers("/auth/**").permitAll()
+                    // User registration — must be open so the very first ADMIN can be created
+                    .requestMatchers(HttpMethod.POST, "/users").permitAll()
+                    // Swagger UI and OpenAPI spec — for manual testing and documentation
+                    .requestMatchers(
+                            "/swagger-ui/**",
+                            "/swagger-ui.html",
+                            "/v3/api-docs/**"
+                    ).permitAll()
+                    // ── Everything else requires a valid JWT ───────────────────
                     // Fine-grained ADMIN/DEVELOPER rules are enforced via @PreAuthorize
                     .anyRequest().authenticated()
             )

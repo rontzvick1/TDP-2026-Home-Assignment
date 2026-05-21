@@ -5,7 +5,7 @@ spring:
   application:
     name: issueflow
   datasource:
-    url: jdbc:postgresql://localhost:5432/issueflow
+    url: jdbc:postgresql://localhost:5433/issueflow
     username: issueflow
     password: issueflow
     driverClassName: org.postgresql.Driver

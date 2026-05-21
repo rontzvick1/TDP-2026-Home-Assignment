@@ -2,6 +2,9 @@
 
 The IssueFlow backend was designed and constructed iteratively through a pair-programming session with an AI Agent. Below is a summary of the core prompts that drove the architecture and implementation.
 
+### 🛠 Models Used:
+* **Gemini 1.5 Pro:** Utilized during the architectural design phase, master planning, and initial project bootstrapping.
+* **Claude 3.5 Sonnet:** Utilized for writing core business logic, handling complex database relationships (DFS cycle detection), and continuous code refactoring.
 ---
 
 ### **Prompt 1: Design Phase & Master Plan**
