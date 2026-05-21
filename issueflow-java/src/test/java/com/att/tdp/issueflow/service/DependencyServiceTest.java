@@ -2,6 +2,7 @@ package com.att.tdp.issueflow.service;
 
 import com.att.tdp.issueflow.dto.request.AddDependencyRequest;
 import com.att.tdp.issueflow.entity.Dependency;
+import com.att.tdp.issueflow.entity.Project;
 import com.att.tdp.issueflow.entity.Ticket;
 import com.att.tdp.issueflow.exception.ConflictException;
 import com.att.tdp.issueflow.repository.DependencyRepository;
@@ -15,8 +16,16 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+/**
+ * Unit tests for {@link DependencyService}.
+ *
+ * <p>DependencyService now fetches all active project edges in a single query
+ * ({@code findActiveByProjectId}) and runs DFS entirely in memory.
+ * Tests stub that bulk-fetch query rather than the old per-node query.</p>
+ */
 @ExtendWith(MockitoExtension.class)
 public class DependencyServiceTest {
 
@@ -29,12 +38,31 @@ public class DependencyServiceTest {
     @InjectMocks
     private DependencyService dependencyService;
 
+    // Helper: build a Project with a given ID
+    private Project project(Long id) {
+        return Project.builder().id(id).build();
+    }
+
+    // Helper: build an active Ticket with a given ID, belonging to a project
+    private Ticket ticket(Long id, Project project) {
+        return Ticket.builder().id(id).project(project).build();
+    }
+
+    // Helper: build a Dependency edge between two tickets
+    private Dependency edge(Ticket from, Ticket blocker) {
+        return Dependency.builder().ticket(from).blocker(blocker).build();
+    }
+
     @Test
     void addDependency_SelfReference_ThrowsConflictException() {
         AddDependencyRequest request = new AddDependencyRequest();
         request.setBlockedByTicketId(1L);
 
-        assertThrows(ConflictException.class, () -> dependencyService.addDependency(1L, request));
+        // Self-reference check happens before any repository call
+        assertThrows(ConflictException.class,
+                () -> dependencyService.addDependency(1L, request));
+
+        verifyNoInteractions(dependencyRepository);
     }
 
     @Test
@@ -42,66 +70,69 @@ public class DependencyServiceTest {
         AddDependencyRequest request = new AddDependencyRequest();
         request.setBlockedByTicketId(2L);
 
-        Ticket ticket = Ticket.builder().id(1L).build();
-        Ticket blocker = Ticket.builder().id(2L).build();
+        Project proj    = project(10L);
+        Ticket ticket   = ticket(1L, proj);
+        Ticket blocker  = ticket(2L, proj);
 
         when(ticketService.getActiveTicketEntity(1L)).thenReturn(ticket);
         when(ticketService.getActiveTicketEntity(2L)).thenReturn(blocker);
         when(dependencyRepository.existsByTicketIdAndBlockerId(1L, 2L)).thenReturn(true);
 
-        assertThrows(ConflictException.class, () -> dependencyService.addDependency(1L, request));
+        assertThrows(ConflictException.class,
+                () -> dependencyService.addDependency(1L, request));
     }
 
     @Test
     void addDependency_CreatesCycle_ThrowsConflictException() {
-        // Graph before addition: 2 -> 3 -> 1
-        // We are trying to add: 1 -> 2
-        // This creates a cycle: 1 -> 2 -> 3 -> 1
-        
+        // Existing graph:  2 -> 3 -> 1
+        // New edge to add: 1 -> 2  (would create cycle 1 -> 2 -> 3 -> 1)
         AddDependencyRequest request = new AddDependencyRequest();
-        request.setBlockedByTicketId(2L); // 1 is blocked by 2
+        request.setBlockedByTicketId(2L); // ticket 1 would be blocked by ticket 2
 
-        Ticket ticket = Ticket.builder().id(1L).build();
-        Ticket blocker = Ticket.builder().id(2L).build();
+        Project proj    = project(10L);
+        Ticket t1       = ticket(1L, proj);
+        Ticket t2       = ticket(2L, proj);
+        Ticket t3       = ticket(3L, proj);
 
-        when(ticketService.getActiveTicketEntity(1L)).thenReturn(ticket);
-        when(ticketService.getActiveTicketEntity(2L)).thenReturn(blocker);
+        when(ticketService.getActiveTicketEntity(1L)).thenReturn(t1);
+        when(ticketService.getActiveTicketEntity(2L)).thenReturn(t2);
         when(dependencyRepository.existsByTicketIdAndBlockerId(1L, 2L)).thenReturn(false);
 
-        // Simulate the DFS traversal:
-        // We start searching for 1L starting from 2L (the blocker).
-        // 2L is blocked by [3L]
-        when(dependencyRepository.findBlockerIdsByTicketId(2L)).thenReturn(List.of(3L));
-        // 3L is blocked by [1L]
-        when(dependencyRepository.findBlockerIdsByTicketId(3L)).thenReturn(List.of(1L));
+        // Return the full graph for this project upfront:
+        // edge(2 -> 3): ticket 2 is blocked by ticket 3
+        // edge(3 -> 1): ticket 3 is blocked by ticket 1
+        List<Dependency> projectEdges = List.of(edge(t2, t3), edge(t3, t1));
+        when(dependencyRepository.findActiveByProjectId(eq(10L))).thenReturn(projectEdges);
 
-        ConflictException ex = assertThrows(ConflictException.class, () -> dependencyService.addDependency(1L, request));
-        assert(ex.getMessage().contains("cycle"));
+        ConflictException ex = assertThrows(ConflictException.class,
+                () -> dependencyService.addDependency(1L, request));
+        assert ex.getMessage().contains("cycle");
     }
 
     @Test
     void addDependency_ValidGraph_SavesSuccessfully() {
-        // Graph before addition: 2 -> 3
-        // We are trying to add: 1 -> 2
-        // Safe, no cycle.
-        
+        // Existing graph:  2 -> 3
+        // New edge to add: 1 -> 2  (safe, no cycle)
         AddDependencyRequest request = new AddDependencyRequest();
         request.setBlockedByTicketId(2L);
 
-        Ticket ticket = Ticket.builder().id(1L).build();
-        Ticket blocker = Ticket.builder().id(2L).build();
+        Project proj    = project(10L);
+        Ticket t1       = ticket(1L, proj);
+        Ticket t2       = ticket(2L, proj);
+        Ticket t3       = ticket(3L, proj);
 
-        when(ticketService.getActiveTicketEntity(1L)).thenReturn(ticket);
-        when(ticketService.getActiveTicketEntity(2L)).thenReturn(blocker);
+        when(ticketService.getActiveTicketEntity(1L)).thenReturn(t1);
+        when(ticketService.getActiveTicketEntity(2L)).thenReturn(t2);
         when(dependencyRepository.existsByTicketIdAndBlockerId(1L, 2L)).thenReturn(false);
 
-        when(dependencyRepository.findBlockerIdsByTicketId(2L)).thenReturn(List.of(3L));
-        when(dependencyRepository.findBlockerIdsByTicketId(3L)).thenReturn(List.of()); // No further blockers
+        // Only one edge in the project: ticket 2 is blocked by ticket 3
+        List<Dependency> projectEdges = List.of(edge(t2, t3));
+        when(dependencyRepository.findActiveByProjectId(eq(10L))).thenReturn(projectEdges);
 
-        Dependency savedDep = Dependency.builder().id(100L).ticket(ticket).blocker(blocker).build();
+        Dependency savedDep = Dependency.builder().id(100L).ticket(t1).blocker(t2).build();
         when(dependencyRepository.save(any(Dependency.class))).thenReturn(savedDep);
 
         var response = dependencyService.addDependency(1L, request);
-        assert(response.getId().equals(100L));
+        assert response.getId().equals(100L);
     }
 }

@@ -25,9 +25,16 @@ public interface DependencyRepository extends JpaRepository<Dependency, Long> {
     Optional<Dependency> findByTicketIdAndBlockerId(Long ticketId, Long blockerId);
 
     /**
-     * Returns the IDs of all tickets that directly block the given ticket.
-     * Used by the DFS cycle-detection algorithm in {@code DependencyService}.
+     * Fetches ALL active (non-deleted) dependency edges for a given project upfront.
+     * Used to build an in-memory adjacency list for the DFS cycle check.
+     * Filtering by project prevents loading unrelated data and keeps the
+     * graph scope tight.
      */
-    @Query("SELECT d.blocker.id FROM Dependency d WHERE d.ticket.id = :ticketId")
-    List<Long> findBlockerIdsByTicketId(@Param("ticketId") Long ticketId);
+    @Query("""
+        SELECT d FROM Dependency d
+        WHERE d.ticket.project.id = :projectId
+          AND d.ticket.deletedAt IS NULL
+          AND d.blocker.deletedAt IS NULL
+    """)
+    List<Dependency> findActiveByProjectId(@Param("projectId") Long projectId);
 }
